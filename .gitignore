@@ -1,0 +1,2 @@
+# CMake/Ninja 编译产物, 不进版本库
+build/
