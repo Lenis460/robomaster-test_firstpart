@@ -28,7 +28,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "ControlTask.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -80,7 +80,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  __HAL_DBGMCU_FREEZE_IWDG();   /* 调试暂停时冻结看门狗, 避免断点期间被复位 */
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -104,7 +104,7 @@ int main(void)
   MX_USART6_UART_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  ControlTaskInit();            /* CAN 过滤器/启动 + 1kHz 控制中断 */
   /* USER CODE END 2 */
 
   /* Infinite loop */

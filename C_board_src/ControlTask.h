@@ -1,7 +1,7 @@
 #ifndef CONTROLTASK_H
 #define CONTROLTASK_H
 
-#include <cstdint>
+#include <stdint.h>
 
 // 供 C 中断处理(stm32f4xx_it.c 及 HAL 弱回调)调用的接口
 #ifdef __cplusplus
