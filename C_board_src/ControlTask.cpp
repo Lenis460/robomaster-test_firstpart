@@ -45,9 +45,8 @@ constexpr uint8_t  kMotorId            = 1;         // 电机拨码 ID
 constexpr uint32_t kFeedbackTimeoutMs  = 20;        // 反馈超时判定 (正常 1ms 一帧)
 
 // ---- PID 初始参数(上台后在硬件上整定) ----
-// 速度环输出是电压 ±25000; 电机反电动势约 0.6V/(rad/s) -> 12500 计数/rad/s 量级,
-// Kp 取千级让 1 rad/s 误差产生千级电压修正, Ki 消除摩擦引起的稳态误差
-constexpr float kVelKp = 2000.0f, kVelKi = 2000.0f, kVelKd = 0.0f;
+// 调参从纯 P、小增益开始: 能跟住但不震荡后, 再逐步加大 Kp, 最后补 Ki
+constexpr float kVelKp = 730.0f, kVelKi = 100.0f, kVelKd = 0.0f;
 // 角度环输出是速度给定 rad/s, Kp 取 10 表示 0.1rad 误差给出 1rad/s 修正
 constexpr float kAngKp = 10.0f,   kAngKi = 0.0f,    kAngKd = 0.0f;
 
@@ -63,6 +62,20 @@ static Pid    ang_pid(kAngKp, kAngKi, kAngKd, kVelCmdLimit, -kVelCmdLimit);
 static float    t = 0.0f;              // 控制时标, 每拍累加, 供正弦发生器使用
 static uint32_t last_feedback_ms = 0;  // 最近一次收到电机反馈的时刻
 static uint32_t tx_fail_cnt = 0;       // CAN 发送失败计数(调试观察用)
+
+// 供 Ozone Waveforms / 调试器实时观察的遥测变量
+// volatile: 告诉编译器别优化掉, 调试器随时会读
+volatile float dbg_ref = 0.0f;   // 当前正弦目标(速度模式=rad/s, 位置模式=rad)
+volatile float dbg_fdb = 0.0f;   // 对应的实际反馈
+volatile float dbg_out = 0.0f;   // PID 输出电压(计数)
+volatile uint32_t dbg_can_esr = 0;    // CAN 错误寄存器快照: LEC=(值>>4)&7, TEC=(值>>16)&0xFF
+volatile uint32_t dbg_bus_recover = 0; // bus-off 自动恢复执行次数
+
+// 在线调参接口: 在 Ozone Watch 里直接改这几个值, 每拍都会写进 PID,
+// 无需重新编译烧录。初值 = 硬件整定后的最终值(2026-10-02, GM6020 #1)。
+volatile float dbg_kp = 730.0f, dbg_ki = 100.0f, dbg_kd = 0.0f;   // 速度环
+volatile float dbg_akp = 10.0f, dbg_aki = 0.0f, dbg_akd = 0.0f;   // 角度环(位置模式用)
+volatile float dbg_kff = 670.0f; // 速度前馈: 计数/(rad/s), 实测整定
 
 // ================= 供 main.c 调用的接口 =================
 
@@ -102,18 +115,32 @@ extern "C" void MainTask(void) {
     (void)pos;   // 仅位置模式使用, 抑制 unused 警告
 
     // ---- 保护: 反馈超时则清零输出并复位 PID, 防止总线断线后电机带旧指令乱跑 ----
+    vel_pid.setParams(dbg_kp, dbg_ki, dbg_kd);   // 每拍同步 Ozone 在线调参值
+    ang_pid.setParams(dbg_akp, dbg_aki, dbg_akd);
     float voltage = 0.0f;
     if (HAL_GetTick() - last_feedback_ms <= kFeedbackTimeoutMs) {
         float vel_cmd;
 #if CONTROL_MODE == MODE_SPEED
         // 正弦速度给定: v(t) = A·sin(2πft)
         vel_cmd = kSpeedAmp * sinf(kTwoPi * kSpeedFreq * t);
+        dbg_ref = vel_cmd;
+        dbg_fdb = vel;
 #else
         // 正弦位置给定: θ(t) = A·sin(2πft), 角度环算出需要的速度
         float pos_ref = kPosAmp * sinf(kTwoPi * kPosFreq * t);
         vel_cmd = ang_pid.calc(pos_ref, pos);
+        dbg_ref = pos_ref;
+        dbg_fdb = pos;
 #endif
-        voltage = vel_pid.calc(vel_cmd, vel);
+        // 前馈 + 反馈:
+        //   前馈 u_ff = kff × 目标速度, 按电机增益直接给出主力电压,
+        //              提供跟踪动力但不进反馈环, 不影响稳定性;
+        //   反馈 PID 只需修正前馈的残差(摩擦/负载/模型误差), Kp 可以取得小,
+        //              避免高增益与环路延迟打架导致的发散。
+        voltage = vel_pid.calc(vel_cmd, vel) + dbg_kff * vel_cmd;
+        if (voltage >  (float)kVoltageMax)  voltage = (float)kVoltageMax;
+        if (voltage < -(float)kVoltageMax)  voltage = -(float)kVoltageMax;
+        dbg_out = voltage;
     } else {
         vel_pid.reset();
         ang_pid.reset();
@@ -137,6 +164,22 @@ extern "C" void MainTask(void) {
     // ---- 喂看门狗: IWDG 约 0.8s 超时, 1kHz 喂狗余量充足;
     //      若控制逻辑卡死, 狗超时复位整机, 这就是"看门狗保护" ----
     HAL_IWDG_Refresh(&hiwdg);
+
+    // ---- 保护: CAN bus-off 自动恢复 ----
+    // 本工程未开 ABOM, 总线严重错误(开机时电机未上电/线序错误等)会让外设
+    // 卡死在 bus-off: 收发全停。每 100ms 检查一次, 发现 BOF 标志就重启 CAN
+    // 外设; 总线接线恢复正常后无需重新烧录即可自动继续工作。
+    static uint16_t recovery_div = 0;
+    if (++recovery_div >= 100) {
+        recovery_div = 0;
+        dbg_can_esr = hcan1.Instance->ESR;
+        if (__HAL_CAN_GET_FLAG(&hcan1, CAN_FLAG_BOF)) {
+            HAL_CAN_Stop(&hcan1);
+            HAL_CAN_Start(&hcan1);
+            HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+            dbg_bus_recover++;
+        }
+    }
 }
 
 extern "C" void CanFeedbackCallback(uint32_t std_id, const uint8_t *data) {
