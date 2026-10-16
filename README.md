@@ -13,6 +13,10 @@
 - 位置模式实拍：[docs/demo_position.mp4](docs/demo_position.mp4)
 - Ozone 波形截图：[docs/speed_curve.png](docs/speed_curve.png) / [docs/position_curve.png](docs/position_curve.png)
 
+### 速度模式跟随波形
+
+![速度模式正弦跟随](docs/speed_curve.png)
+
 ### 位置模式跟随波形
 
 ![位置模式正弦跟随](docs/position_curve.png)
