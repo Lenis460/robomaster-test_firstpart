@@ -25,7 +25,7 @@
 // ================= 模式切换 =================
 #define MODE_SPEED    0
 #define MODE_POSITION 1
-#define CONTROL_MODE  MODE_SPEED   // 考核两种跟随, 改这一行并重新编译来切换
+#define CONTROL_MODE  MODE_POSITION   // 考核两种跟随, 改这一行并重新编译来切换
 
 namespace {
 
@@ -128,7 +128,12 @@ extern "C" void MainTask(void) {
 #else
         // 正弦位置给定: θ(t) = A·sin(2πft), 角度环算出需要的速度
         float pos_ref = kPosAmp * sinf(kTwoPi * kPosFreq * t);
-        vel_cmd = ang_pid.calc(pos_ref, pos);
+        // 位置误差卷绕到最近的等效角度 [-π,π]:
+        // CAN 丢帧可能让多圈累计错计一整圈, 产生 ±2π 的幽灵误差;
+        // 卷绕后位置环只会朝"最近的等效位置"修正, 不会狂转一整圈去追
+        float pos_err = pos_ref - pos;
+        pos_err -= kTwoPi * roundf(pos_err / kTwoPi);
+        vel_cmd = ang_pid.calc(pos + pos_err, pos);
         dbg_ref = pos_ref;
         dbg_fdb = pos;
 #endif
