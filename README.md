@@ -7,11 +7,15 @@
 | 模式 | 目标曲线 | 实测跟随 |
 |---|---|---|
 | 速度模式 | 5·sin(2π·1·t) rad/s | 幅度/相位基本重合（见 [speed_curve.png](docs/speed_curve.png)） |
-| 位置模式 | π·sin(2π·0.5·t) rad（±半圈摆动） | 跟随度约 95% |
+| 位置模式 | π·sin(2π·0.5·t) rad（±半圈摆动） | 跟随度约 95%，±3.08 / ±3.14（见 [position_curve.png](docs/position_curve.png)） |
 
 - 速度模式实拍：[docs/demo_speed.mp4](docs/demo_speed.mp4)
 - 位置模式实拍：[docs/demo_position.mp4](docs/demo_position.mp4)
-- Ozone 波形截图：[docs/speed_curve.png](docs/speed_curve.png)
+- Ozone 波形截图：[docs/speed_curve.png](docs/speed_curve.png) / [docs/position_curve.png](docs/position_curve.png)
+
+### 位置模式跟随波形
+
+![位置模式正弦跟随](docs/position_curve.png)
 
 ## 硬件连接
 
